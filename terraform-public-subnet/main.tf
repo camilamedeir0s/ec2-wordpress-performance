@@ -107,6 +107,43 @@ resource "aws_instance" "wordpress_instance2" {
               EOF
 }
 
+resource "aws_instance" "mysql_instance" {
+  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+
+  tags = {
+    Name = "MySqlInstance"
+  }
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              EOF
+}
+
+resource "aws_instance" "locust_instance" {
+  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+
+  tags = {
+    Name = "LocustInstance"
+  }
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install -y python3-pip
+              sudo apt install python3-locust -y
+              EOF
+}
+
 # Criação de um security group público para o Load Balancer
 resource "aws_security_group" "public_lb_sg" {
   name        = "public-lb-sg"
