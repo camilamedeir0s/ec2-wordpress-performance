@@ -7,12 +7,24 @@ class UserBehavior(TaskSet):
         self.client.get("/")
         
     @task(2)
-    def page_5(self):
-        self.client.get("/?p=5")
+    def page_136(self):
+        self.client.get("/?p=136")
         
     @task(3)
-    def page_1(self):
-        self.client.get("/?p=1")
+    def page_152(self):
+        self.client.get("/?p=152")
+
+    @task(3)
+    def page_151(self):
+        self.client.get("/?p=151")
+
+    @task(4)
+    def page_136(self):
+        self.client.get("/?p=132")
+
+    @task(5)
+    def page_136(self):
+        self.client.get("/?p=128")
 
 class WebsiteUser(HttpUser):
     tasks = [UserBehavior]
