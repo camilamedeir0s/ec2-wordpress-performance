@@ -68,69 +68,165 @@ resource "aws_security_group" "public_sg" {
   }
 }
 
-# Criação da instância EC2 para rodar o Wordpress1
-resource "aws_instance" "wordpress_instance1" {
-  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.public_subnet.id
-  vpc_security_group_ids = [aws_security_group.public_sg.id]
-
-  tags = {
-    Name = "WordpressInstance1"
-  }
-
-  user_data = <<-EOF
-              #!/bin/bash
-              sudo apt update -y
-              sudo apt install -y docker.io
-              sudo systemctl start docker
-              sudo systemctl enable docker
-              EOF
+# Criação da policy para acesso ao S3
+resource "aws_iam_policy" "s3_access_policy" {
+  name        = "EC2S3AccessPolicy"
+  description = "Permite acesso ao S3"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect   = "Allow",
+      Action   = [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:PutObject"
+      ],
+      Resource = "*"
+    }]
+  })
 }
 
-resource "aws_instance" "wordpress_instance2" {
-  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.public_subnet.id
-  vpc_security_group_ids = [aws_security_group.public_sg.id]
+# Criação de uma role associada à EC2 com permissões de acesso ao S3
+resource "aws_iam_role" "ec2_role" {
+  name = "ec2Role"
 
-  tags = {
-    Name = "WordpressInstance2"
-  }
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow",
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
 
-  user_data = <<-EOF
-              #!/bin/bash
-              sudo apt update -y
-              sudo apt install -y docker.io
-              sudo systemctl start docker
-              sudo systemctl enable docker
-              EOF
+# Associando a policy de S3 à role da EC2
+resource "aws_iam_role_policy_attachment" "attach_s3_access" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = aws_iam_policy.s3_access_policy.arn
+}
+
+# Criação do perfil de instância (Instance Profile) para a EC2 associada à role
+resource "aws_iam_instance_profile" "ec2_instance_profile" {
+  name = "ec2InstanceProfile"
+  role = aws_iam_role.ec2_role.name
 }
 
 resource "aws_instance" "mysql_instance" {
   ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t2.micro"
+  instance_type = "t3.small"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
+  iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
 
   tags = {
     Name = "MySqlInstance"
   }
 
+  depends_on = [
+    aws_lb.wordpress_lb
+  ]
+
   user_data = <<-EOF
               #!/bin/bash
               sudo apt update -y
               sudo apt install -y docker.io
               sudo systemctl start docker
               sudo systemctl enable docker
+              sudo docker run -p 3306:3306 --name wordpressdb -e MYSQL_ROOT_PASSWORD=rootpassword -e MYSQL_DATABASE=wordpress -e MYSQL_USER=wpuser -e MYSQL_PASSWORD=password -d mysql:5.7
+
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              sudo apt install unzip
+              unzip awscliv2.zip
+              sudo ./aws/install
+
+              aws s3 cp s3://nuvem-wp-bkp/bkp.sql ./bkp.sql
+              sudo docker cp ./bkp.sql wordpressdb:/bkp.sql
+              sudo docker exec -i wordpressdb mysql -u root -p'rootpassword' wordpress < ./bkp.sql
+              sudo docker exec -i wordpressdb mysql -u wpuser -p'password' wordpress -e "UPDATE wp_options SET option_value = 'http://${aws_lb.wordpress_lb.dns_name}' WHERE option_name = 'siteurl'; UPDATE wp_options SET option_value = 'http://${aws_lb.wordpress_lb.dns_name}' WHERE option_name = 'home';"
+              EOF
+}
+
+# Output do IP privado da MySQL Instance
+output "mysql_private_ip" {
+  value = aws_instance.mysql_instance.private_ip
+}
+
+# Criação da instância EC2 para rodar o Wordpress1
+resource "aws_instance" "wordpress_instance1" {
+  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
+  instance_type = "t3.small"
+  subnet_id     = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
+
+  tags = {
+    Name = "WordpressInstance1"
+  }
+
+  depends_on = [aws_instance.mysql_instance]
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo docker run -p 80:80 --name wordpress -e WORDPRESS_DB_HOST=${aws_instance.mysql_instance.private_ip}:3306 -e WORDPRESS_DB_USER=wpuser -e WORDPRESS_DB_PASSWORD=password -e WORDPRESS_DB_NAME=wordpress -d wordpress
+              
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              sudo apt install unzip
+              unzip awscliv2.zip
+              sudo ./aws/install
+
+              aws s3 cp s3://nuvem-wp-bkp/wp-content.tar ./wp-content.tar
+              tar -xf wp-content.tar -C .
+
+              sudo docker cp ./wp-content/. wordpress:/var/www/html/wp-content/
+              EOF
+}
+
+resource "aws_instance" "wordpress_instance2" {
+  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
+  instance_type = "t3.small"
+  subnet_id     = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
+
+  tags = {
+    Name = "WordpressInstance2"
+  }
+
+  depends_on = [aws_instance.mysql_instance]
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo docker run -p 80:80 --name wordpress -e WORDPRESS_DB_HOST=${aws_instance.mysql_instance.private_ip}:3306 -e WORDPRESS_DB_USER=wpuser -e WORDPRESS_DB_PASSWORD=password -e WORDPRESS_DB_NAME=wordpress -d wordpress
+              
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              sudo apt install unzip
+              unzip awscliv2.zip
+              sudo ./aws/install
+
+              aws s3 cp s3://nuvem-wp-bkp/wp-content.tar ./wp-content.tar
+              tar -xf wp-content.tar -C .
+
+              sudo docker cp ./wp-content/. wordpress:/var/www/html/wp-content/
               EOF
 }
 
 resource "aws_instance" "locust_instance" {
   ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t2.micro"
+  instance_type = "t3.small"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
+  iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
 
   tags = {
     Name = "LocustInstance"
@@ -141,6 +237,15 @@ resource "aws_instance" "locust_instance" {
               sudo apt update -y
               sudo apt install -y python3-pip
               sudo apt install python3-locust -y
+
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              sudo apt install unzip
+              unzip awscliv2.zip
+              sudo ./aws/install
+
+              aws s3 cp s3://nuvem-wp-bkp/locustfile.py ./locustfile.py
+              aws s3 cp s3://nuvem-wp-bkp/run_test.sh ./run_test.sh
+
               EOF
 }
 
