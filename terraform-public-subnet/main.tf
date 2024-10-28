@@ -59,6 +59,13 @@ resource "aws_security_group" "public_sg" {
   cidr_blocks = [aws_vpc.main_vpc.cidr_block]
   }
 
+  ingress {
+  from_port   = 22
+  to_port     = 22
+  protocol    = "tcp"
+  cidr_blocks = ["18.206.107.24/29"]
+  }
+
   # Permite todo o tráfego de saída (egress) para a internet (para download de pacotes)
   egress {
     from_port   = 0
@@ -116,7 +123,7 @@ resource "aws_iam_instance_profile" "ec2_instance_profile" {
 
 resource "aws_instance" "mysql_instance" {
   ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t3.small"
+  instance_type = "t3.large"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
   iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
@@ -157,7 +164,7 @@ output "mysql_private_ip" {
 # Criação da instância EC2 para rodar o Wordpress1
 resource "aws_instance" "wordpress_instance1" {
   ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t3.small"
+  instance_type = "t3.large"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
   iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
@@ -190,7 +197,7 @@ resource "aws_instance" "wordpress_instance1" {
 
 resource "aws_instance" "wordpress_instance2" {
   ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t3.small"
+  instance_type = "t3.large"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
   iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
@@ -221,9 +228,42 @@ resource "aws_instance" "wordpress_instance2" {
               EOF
 }
 
+resource "aws_instance" "wordpress_instance3" {
+  ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
+  instance_type = "t3.large"
+  subnet_id     = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
+
+  tags = {
+    Name = "WordpressInstance3"
+  }
+
+  depends_on = [aws_instance.mysql_instance]
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo docker run -p 80:80 --name wordpress -e WORDPRESS_DB_HOST=${aws_instance.mysql_instance.private_ip}:3306 -e WORDPRESS_DB_USER=wpuser -e WORDPRESS_DB_PASSWORD=password -e WORDPRESS_DB_NAME=wordpress -d wordpress
+              
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              sudo apt install unzip
+              unzip awscliv2.zip
+              sudo ./aws/install
+
+              aws s3 cp s3://nuvem-wp-bkp/wp-content.tar ./wp-content.tar
+              tar -xf wp-content.tar -C .
+
+              sudo docker cp ./wp-content/. wordpress:/var/www/html/wp-content/
+              EOF
+}
+
 resource "aws_instance" "locust_instance" {
   ami           = "ami-0866a3c8686eaeeba"  # Substitua com a AMI do Ubuntu mais recente
-  instance_type = "t3.small"
+  instance_type = "t3.large"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
   iam_instance_profile    = aws_iam_instance_profile.ec2_instance_profile.name
@@ -307,6 +347,12 @@ resource "aws_lb_target_group_attachment" "wordpress_instance1_tg_attachment" {
 resource "aws_lb_target_group_attachment" "wordpress_instance2_tg_attachment" {
   target_group_arn = aws_lb_target_group.wordpress_tg.arn
   target_id        = aws_instance.wordpress_instance2.id
+  port             = 80
+}
+
+resource "aws_lb_target_group_attachment" "wordpress_instance3_tg_attachment" {
+  target_group_arn = aws_lb_target_group.wordpress_tg.arn
+  target_id        = aws_instance.wordpress_instance3.id
   port             = 80
 }
 

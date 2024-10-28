@@ -3,7 +3,7 @@
 # Definindo as variáveis
 users=50
 spawn_rate=10
-host="http://localhost:8080"
+host="http://wordpress-lb-1863647081.us-east-1.elb.amazonaws.com"
 run_time="3m20s"
 
 # Executando o comando com as variáveis

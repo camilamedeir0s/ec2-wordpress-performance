@@ -19,11 +19,11 @@ class UserBehavior(TaskSet):
         self.client.get("/?p=151")
 
     @task(4)
-    def page_136(self):
+    def page_132(self):
         self.client.get("/?p=132")
 
     @task(5)
-    def page_136(self):
+    def page_128(self):
         self.client.get("/?p=128")
 
 class WebsiteUser(HttpUser):
